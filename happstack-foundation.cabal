@@ -1,7 +1,7 @@
 Name:                happstack-foundation
 Version:             0.1.0
 Synopsis:            Glue code for using Happstack with acid-state, web-routes, reform, and HSP
-Description:         happstack-foundation is a libary which builds on top of existing components
+Description:         happstack-foundation is a library which builds on top of existing components
                      to provide a powerful and type-safe environment for web development. It uses:
                      .
                      happstack-server for the underlying HTTP support
