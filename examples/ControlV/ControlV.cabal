@@ -1,0 +1,22 @@
+Name:                ControlV
+Version:             0.1
+Synopsis:            yet another pasteboard
+Description:         A demo pasteboard intended to show off happstack-foundation
+Homepage:            http://www.happstack.com/
+License:             BSD3
+License-file:        LICENSE
+Author:              Jeremy Shaw
+Maintainer:          jeremy@n-heptane.com
+Category:            Happstack
+Build-type:          Simple
+Cabal-version:       >=1.2
+Data-files:
+        style.css
+
+Executable ControlV
+  Main-Is:           Main.hs
+  Build-Depends:     base < 5,
+                     happstack-foundation == 0.1.*,
+                     ixset == 1.0.*,
+                     time == 1.4.*,
+                     text == 0.11.*
