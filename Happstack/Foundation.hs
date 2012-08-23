@@ -1,6 +1,8 @@
-{-# LANGUAGE DeriveDataTypeable, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, ScopedTypeVariables, TypeFamilies, TypeSynonymInstances, RankNTypes #-}
+{-# LANGUAGE DeriveDataTypeable, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, ScopedTypeVariables, TypeFamilies, TypeSynonymInstances, RankNTypes, RecordWildCards #-}
 module Happstack.Foundation
     ( AcidConfig(..)
+    , FoundationConf(..)
+    , defaultConf
     , FoundationT
     , FoundationT'
     , FoundationForm
@@ -55,6 +57,9 @@ import Web.Routes.XMLGenT
 class HasAcidState m st where
     getAcidState :: m (AcidState st)
 
+-- | wrapper around query from acid-state
+--
+-- This variant automatically gets the 'AcidState' handle from the monad
 query :: forall event m.
          ( Functor m
          , MonadIO m
@@ -67,6 +72,9 @@ query event =
     do as <- getAcidState
        query' (as :: AcidState (EventState event)) event
 
+-- | wrapper around update from acid-state
+--
+-- This variant automatically gets the 'AcidState' handle from the monad
 update :: forall event m.
           ( Functor m
           , MonadIO m
@@ -98,6 +106,7 @@ withLocalState mPath initialState =
     bracket (liftIO $ (maybe openLocalState openLocalStateFrom mPath) initialState)
             (\acid -> liftIO $ (createArchive acid >> createCheckpointAndClose acid))
 
+-- | simple record that holds some state information that we want available in the 'FoundationT' monad
 data AppState url acidState requestState = AppState
     { here  :: url
     , acid  :: AcidState acidState
@@ -107,12 +116,14 @@ data AppState url acidState requestState = AppState
 type FoundationT' url acidState requestState m = RouteT url (StateT (AppState url acidState requestState) (ServerPartT m))
 type FoundationT  url acidState requestState m = XMLGenT (FoundationT' url acidState requestState m)
 
+-- | returns the decoded 'url' from the 'Request'
 whereami :: (Functor m, Monad m) => FoundationT url acidState requestState m url
 whereami = here <$> get
 
 instance (Functor m, Monad m) => HasAcidState (FoundationT url acidState requestState m) acidState where
     getAcidState = acid <$> get
 
+-- | an error type used with reform forms
 data AppError
     = AppCFE (CommonFormError [Input])
     | TextError Text
@@ -130,12 +141,14 @@ instance (Functor m, Monad m) => EmbedAsChild (FoundationT' url acidState reques
 
 type FoundationForm url acidState requestState m = Form (FoundationT url acidState requestState m) [Input] AppError [FoundationT url acidState requestState m XML] ()
 
+-- | configuration information for our acid-state database
 data AcidConfig st
     = AcidLocal
-      { acidPath      :: Maybe FilePath
-      , initialState  :: st
+      { acidPath      :: Maybe FilePath  -- ^ optional path for acid-state directory
+      , initialState  :: st              -- ^ initial state
       }
 
+-- | default page template
 defaultTemplate :: ( Functor m, Monad m
                    , EmbedAsChild (FoundationT' url acidState requestState m) body
                    , EmbedAsChild (FoundationT' url acidState requestState m) headers
@@ -148,18 +161,34 @@ defaultTemplate :: ( Functor m, Monad m
 defaultTemplate title headers body =
     XMLGenT $ HTML.defaultTemplate title headers body
 
+-- | configuration for server
+data FoundationConf = FoundationConf
+    { httpConf :: Conf
+    , bodyPolicy ::  BodyPolicy
+    }
+
+-- | configuration
+defaultConf :: FoundationConf
+defaultConf =
+    FoundationConf { httpConf = nullConf
+                   , bodyPolicy = defaultBodyPolicy "/tmp" 10000000 100000 100000
+                   }
+
+-- | run the application
+--
+-- starts the database, listens for requests, etc.
 simpleApp :: (ToMessage a, IsAcidic acidState, Typeable acidState, PathInfo url, Monad m) =>
-             (forall r. m r -> IO r)                       -- ^ function to flatten inner monad
-          -> Conf                                -- ^ 'Conf' to pass onto 'simpleHTTP'
+             (forall r. m r -> IO r)             -- ^ function to flatten inner monad
+          -> FoundationConf                      -- ^ 'Conf' to pass onto 'simpleHTTP'
           -> AcidConfig acidState                -- ^ 'AcidState' configuration
           -> requestState                        -- ^ initial @requestState@ value
           -> url                                 -- ^ default URL (ie, what does / map to)
           -> (url -> FoundationT url acidState requestState m a) -- ^ handler
           -> IO ()
-simpleApp flattener conf acidConfig initialReqSt defRoute route =
+simpleApp flattener FoundationConf{..} acidConfig initialReqSt defRoute route =
     withLocalState (acidPath acidConfig) (initialState acidConfig) $ \acid ->
-        do tid <- forkIO $ simpleHTTP conf $ do decodeBody (defaultBodyPolicy "/tmp" 0 10000 10000)
-                                                implSite Text.empty Text.empty (site acid)
+        do tid <- forkIO $ simpleHTTP httpConf $ do decodeBody bodyPolicy
+                                                    implSite Text.empty Text.empty (site acid)
            waitForTermination
            killThread tid
     where

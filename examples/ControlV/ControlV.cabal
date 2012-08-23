@@ -9,14 +9,14 @@ Author:              Jeremy Shaw
 Maintainer:          jeremy@n-heptane.com
 Category:            Happstack
 Build-type:          Simple
-Cabal-version:       >=1.2
+Cabal-version:       >=1.6
 Data-files:
         style.css
 
 Executable ControlV
   Main-Is:           Main.hs
   Build-Depends:     base < 5,
-                     happstack-foundation == 0.1.*,
+                     happstack-foundation >= 0.2 && < 0.3,
                      ixset == 1.0.*,
                      time == 1.4.*,
                      text == 0.11.*
