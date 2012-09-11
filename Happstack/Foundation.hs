@@ -171,15 +171,20 @@ whereami :: (Functor m, Monad m) => FoundationT url acidState requestState m url
 whereami = here <$> get
 
 -- | get the 'requestState' value
-getRequestState :: (Functor m, Monad m) => FoundationT url acidState requestState m requestState
+getRequestState :: (Functor m, MonadState (AppState url acidState requestState) m) => m requestState
 getRequestState = reqSt <$> get
 
 -- | set the 'requestState' value
-setRequestState :: (Functor m, Monad m) => requestState -> FoundationT url acidState requestState m ()
+setRequestState :: (Functor m, MonadState (AppState url acidState requestState) m) =>
+                   requestState
+                -> m ()
 setRequestState st = modify $ \appState -> appState { reqSt = st }
 
 -- | set the 'requestState' value
-modifyRequestState :: (Functor m, Monad m) => (requestState -> requestState) -> FoundationT url acidState requestState m ()
+modifyRequestState :: MonadState (AppState url acidState requestState) m =>
+                      (requestState -> requestState)
+                   -> m ()
+
 modifyRequestState f = modify $ \appState -> appState { reqSt = f (reqSt appState) }
 
 instance (Functor m, Monad m) => HasAcidState (FoundationT url acidState requestState m) acidState where
