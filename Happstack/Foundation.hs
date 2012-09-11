@@ -1,16 +1,52 @@
 {-# LANGUAGE DeriveDataTypeable, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, ScopedTypeVariables, TypeFamilies, TypeSynonymInstances, RankNTypes, RecordWildCards #-}
+{-|
+@happstack-foundation@ provides a type-safe environment for Haskell web development. It builds on top of:
+
+ - happstack-server - an HTTP server
+
+ - HSP - HTML Templating
+
+ - web-routes - type-safe URL routing
+
+ - reform - type-safe form composition and validation
+
+ - acid-state - native Haskell persistent database
+
+An example application can be found here:
+
+<http://patch-tag.com/r/mae/happstack/snapshot/current/content/pretty/happstack-foundation/examples/ControlV/Main.hs>
+
+A screencast can be found here:
+
+<http://www.youtube.com/watch?v=7Wmszk4wZxQ>
+
+@happstack-foundation@ itself is not yet documented in the Happstack Crash Course. However, all of the components that it uses are:
+
+<http://www.happstack.com/docs/crashcourse/index.html>
+
+-}
 module Happstack.Foundation
-    ( AcidConfig(..)
+    ( -- * Configuration
+      AcidConfig(..)
     , FoundationConf(..)
     , defaultConf
+      -- * Type Aliases
     , FoundationT
     , FoundationT'
     , FoundationForm
+    -- * FoundationT functions
     , whereami
+    , getRequestState
+    , setRequestState
+    , modifyRequestState
+      -- * HTML Template
     , defaultTemplate
+      -- * acid-state
     , query
     , update
+      -- * running
     , simpleApp
+    -- * re-exports
     , Data(..)
     , Typeable(..)
     , module Control.Applicative
@@ -54,6 +90,7 @@ import Web.Routes.TH
 import Web.Routes.Happstack
 import Web.Routes.XMLGenT
 
+-- | 'HasAcidState' provides a single method 'getAcidState' which can be used to retrieve an 'AcidState' handle from the current monad.
 class HasAcidState m st where
     getAcidState :: m (AcidState st)
 
@@ -88,7 +125,7 @@ update event =
        update' (as :: AcidState (EventState event)) event
 
 -- | bracket the opening and close of the `AcidState` handle.
-
+--
 -- automatically creates a checkpoint on close
 --
 -- unfortunately, when nesting multiple calls if some migrations
@@ -113,12 +150,37 @@ data AppState url acidState requestState = AppState
     , reqSt :: requestState
     }
 
+-- | similar to the 'FoundationT'' type alias, but without the 'XMLGenT' wrapper. This variant is most often used in class constraints.
 type FoundationT' url acidState requestState m = RouteT url (StateT (AppState url acidState requestState) (ServerPartT m))
+
+-- | the 'FoundationT' monad
+--
+-- - @url@ - the type-safe URL route type
+--
+-- - @acidState@ - the type of the state value stored in acid-state
+--
+-- - @requestState@ - a per-request state value that the developer can get/set/modify
+--
+-- - @m@ - inner monad
+--
+-- see also: 'whereami', 'getRequestState', 'setRequestState', 'modifyRequestState', 'simpleApp'
 type FoundationT  url acidState requestState m = XMLGenT (FoundationT' url acidState requestState m)
 
 -- | returns the decoded 'url' from the 'Request'
 whereami :: (Functor m, Monad m) => FoundationT url acidState requestState m url
 whereami = here <$> get
+
+-- | get the 'requestState' value
+getRequestState :: (Functor m, Monad m) => FoundationT url acidState requestState m requestState
+getRequestState = reqSt <$> get
+
+-- | set the 'requestState' value
+setRequestState :: (Functor m, Monad m) => requestState -> FoundationT url acidState requestState m ()
+setRequestState st = modify $ \appState -> appState { reqSt = st }
+
+-- | set the 'requestState' value
+modifyRequestState :: (Functor m, Monad m) => (requestState -> requestState) -> FoundationT url acidState requestState m ()
+modifyRequestState f = modify $ \appState -> appState { reqSt = f (reqSt appState) }
 
 instance (Functor m, Monad m) => HasAcidState (FoundationT url acidState requestState m) acidState where
     getAcidState = acid <$> get
@@ -139,6 +201,7 @@ instance (Functor m, Monad m) => EmbedAsChild (FoundationT' url acidState reques
     asChild (AppCFE cfe)    = asChild (commonFormErrorStr show cfe)
     asChild (TextError txt) = asChild txt
 
+-- | 'FoundationForm' is an alias for working with reform based Forms
 type FoundationForm url acidState requestState m = Form (FoundationT url acidState requestState m) [Input] AppError [FoundationT url acidState requestState m XML] ()
 
 -- | configuration information for our acid-state database
