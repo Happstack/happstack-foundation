@@ -251,12 +251,13 @@ simpleApp :: (ToMessage a, IsAcidic acidState, Typeable acidState, PathInfo url,
           -> AcidConfig acidState                -- ^ 'AcidState' configuration
           -> requestState                        -- ^ initial @requestState@ value
           -> url                                 -- ^ default URL (ie, what does / map to)
+          -> Text                                -- ^ the base URL for the site as seen by the outside world (or, at least, by your openid provider) (e.g. "http://example.org:8000", no trailing slash)
           -> (url -> FoundationT url acidState requestState m a) -- ^ handler
           -> IO ()
-simpleApp flattener FoundationConf{..} acidConfig initialReqSt defRoute route =
+simpleApp flattener FoundationConf{..} acidConfig initialReqSt defRoute baseURI route =
     withLocalState (acidPath acidConfig) (initialState acidConfig) $ \acid ->
         do tid <- forkIO $ simpleHTTP httpConf $ do decodeBody bodyPolicy
-                                                    implSite Text.empty Text.empty (site acid)
+                                                    implSite baseURI Text.empty (site acid)
            waitForTermination
            killThread tid
     where
