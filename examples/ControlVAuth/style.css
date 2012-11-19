@@ -1,0 +1,165 @@
+body
+{
+    font-size: 16px;
+    font-family: sans-serif;
+    padding-left: 32px;
+    width: 45em;
+    margin-left: 2em;
+}
+
+
+h1, h2, h3, h4
+{
+    font-family: sans-serif;
+    font-weight: normal;
+}
+
+a
+{
+    text-decoration: none;
+    color: #1179BE;
+}
+
+a:hover
+{
+    text-decoration: underline;
+}
+
+/* logo & menu theme */
+
+#logo
+{
+    vertical-align: middle;
+    display: inline;
+    font-size: 3em;
+    font-weight: bold;
+    color: black;
+    margin-right: 16px;
+}
+
+
+ul.menu
+{
+    display: inline-block;
+    vertical-align: middle;
+    list-style-type: none;
+    background: #16A5C9;
+    border-radius: 10px;
+    padding: 0;
+    margin: 0;
+}
+
+.menu li
+{
+    display: inline-block;
+    border-right: 3px solid white;
+}
+
+.menu li:last-child
+{
+    border-right: none;
+}
+
+.menu a
+{
+    padding: 1em;
+    display: inline-block;
+    text-decoration: none;
+    color: white;
+    text-shadow: 1px 1px #aaa;
+}
+
+.menu a:visited
+{
+    color: white;
+}
+
+/* form theme */
+
+fieldset
+{
+    margin: 0;
+    padding: 0;
+    border: none;
+}
+
+fieldset > ul
+{
+    margin: 0;
+    padding: 0;
+
+    list-style-type: none;
+}
+
+
+label
+{
+    font-weight: bold;
+}
+
+label > span
+{
+    min-width: 64px;
+    display: inline-block;
+}
+
+input, textarea
+{
+    border: 1px solid #aaa;
+    box-shadow: 2px 2px 2px #aaa;
+}
+
+ul.reform-error-list
+{
+    color: red;
+    display: inline;
+    padding: 1em;
+}
+
+.reform-error-list li
+{
+    display: inline-block;
+    list-style-type: square;
+}
+
+/* paste theme */
+
+dl.paste-header
+{
+    font-family: monospace;
+    line-height: 1.5em;
+    border-top: 1px solid black;
+    border-bottom: 1px solid black;
+}
+
+.paste-header dt
+{
+    float: left;
+    clear: left;
+    font-weight: bold;
+}
+
+.paste-header dd
+{
+    margin-left: 8em;
+}
+
+/* paste list theme */
+
+table
+{
+    border-spacing: 0;
+    line-height: 2;
+}
+
+th
+{
+    border-bottom: 2px solid #66a;
+    text-align: left;
+    font-weight: bold;
+}
+
+td
+{
+    padding-right: 3em;
+}
