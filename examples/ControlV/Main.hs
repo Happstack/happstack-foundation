@@ -315,6 +315,6 @@ route url =
 -- main
 ------------------------------------------------------------------------------
 
--- | start the app. listens on port 8000.
+-- | start the app. listens on port 8000 on localhost
 main :: IO ()
-main = simpleApp id defaultConf (AcidLocal Nothing initialCtrlVState) () ViewRecent route
+main = simpleApp id defaultConf (AcidLocal Nothing initialCtrlVState) () ViewRecent "" route

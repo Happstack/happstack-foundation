@@ -16,7 +16,7 @@ Data-files:
 Executable ControlV
   Main-Is:           Main.hs
   Build-Depends:     base < 5,
-                     happstack-foundation >= 0.2 && < 0.3,
+                     happstack-foundation >= 0.3 && < 0.4,
                      ixset == 1.0.*,
                      time == 1.4.*,
                      text == 0.11.*

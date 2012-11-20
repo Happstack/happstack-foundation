@@ -83,7 +83,7 @@ fieldset
     border: none;
 }
 
-fieldset > ul
+fieldset > ul, fieldset > ol
 {
     margin: 0;
     padding: 0;
