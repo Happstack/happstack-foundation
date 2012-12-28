@@ -218,6 +218,7 @@ data AcidConfig st
 
 -- | default page template
 defaultTemplate :: ( Functor m, Monad m
+                   , XMLGenerator (FoundationT' url acidState requestState m)
                    , EmbedAsChild (FoundationT' url acidState requestState m) body
                    , EmbedAsChild (FoundationT' url acidState requestState m) headers
                    , XMLType (FoundationT' url acidState requestState m) ~ XML

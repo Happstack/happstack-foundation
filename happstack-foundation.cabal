@@ -1,5 +1,5 @@
 Name:                happstack-foundation
-Version:             0.3.0
+Version:             0.3.1
 Synopsis:            Glue code for using Happstack with acid-state, web-routes, reform, and HSP
 Description:         happstack-foundation is a library which builds on top of existing components
                      to provide a powerful and type-safe environment for web development. It uses:
@@ -36,7 +36,7 @@ Library
                      reform                == 0.1.*,
                      reform-happstack      == 0.1.*,
                      reform-hsp            == 0.1.*,
-                     safecopy              == 0.7.*,
+                     safecopy              >= 0.7 && < 0.9,
                      text                  == 0.11.*,
                      web-routes            == 0.27.*,
                      web-routes-happstack  == 0.23.*,
