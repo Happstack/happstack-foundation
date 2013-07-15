@@ -1,14 +1,16 @@
 {-# LANGUAGE DeriveDataTypeable, FlexibleContexts, FlexibleInstances, GeneralizedNewtypeDeriving, MultiParamTypeClasses, OverloadedStrings, RecordWildCards, TemplateHaskell, TypeFamilies, TypeSynonymInstances, OverloadedStrings #-}
-{-# OPTIONS_GHC -F -pgmFtrhsx #-}
+{-# OPTIONS_GHC -F -pgmFhsx2hs #-}
 module Main where
 
 import Happstack.Foundation
 import qualified Data.IxSet as IxSet
 import Data.IxSet (IxSet, Indexable, Proxy(..), (@=), getEQ, getOne, ixSet, ixFun)
 import Data.Text  (Text)
+import qualified Data.Text.Lazy as Lazy
 import qualified Data.Text as Text
 import Data.Time.Clock (UTCTime, getCurrentTime)
 -- Added for auth
+
 import Happstack.Auth
 import Happstack.Auth.Core.Auth
 import Happstack.Auth.Core.Profile
@@ -20,9 +22,10 @@ import System.Environment
 
 -- Added for Blaze under Auth
 import qualified Happstack.Server.HSP.HTML as HTML
+import HSP                                 (toName)
+import HSP.XML                             as HTML
 import Text.Blaze.Html                        (Html)
-import Text.Blaze.Html.Renderer.String         (renderHtml)
-import qualified HSX.XMLGenerator as HSX
+import Text.Blaze.Html.Renderer.Text         (renderHtml)
 
 ------------------------------------------------------------------------------
 -- Model
@@ -203,15 +206,16 @@ withAcid mBasePath f =
 -- contexts it needs.
 baseAppTemplate :: ( XMLGenerator m
                , Happstack m
-               , EmbedAsAttr m (Attr String Route)
+               , EmbedAsAttr m (Attr Lazy.Text Route)
                , EmbedAsChild m headers
                , EmbedAsChild m body
+               , StringType m ~ Lazy.Text
                ) =>
                Acid
-            -> String   -- ^ page title
+            -> Lazy.Text   -- ^ page title
             -> headers  -- ^ extra headers to add to \<head\> tag
             -> body     -- ^ contents of \<body\> tag
-            -> m (HSX.XMLType m)
+            -> m (XMLType m)
 baseAppTemplate acid@Acid{..} ttl moreHdrs bdy = HTML.defaultTemplate ttl <%><link rel="stylesheet" href=CSS type="text/css" media="screen" /><% moreHdrs %></%> $
                 <%>
                  <div id="logo">^V</div>
@@ -234,7 +238,7 @@ baseAppTemplate acid@Acid{..} ttl moreHdrs bdy = HTML.defaultTemplate ttl <%><li
                               </ul>
                             (Just uid) -> do
                               <ul class="auth">
-                                <li>You are logged in with profile <% show $ unUserId uid %></li>
+                                <li>You are logged in with profile <% Lazy.pack $ show $ unUserId uid %></li>
                                 -- Debugging
                                 -- <li><% show authDump %></li>
                                 <li><a href=(U_AuthProfile $ AuthURL A_Logout)>logout</a></li>
@@ -250,7 +254,7 @@ appTemplate :: ( EmbedAsChild CtrlV' headers
                , EmbedAsChild CtrlV' body
                ) =>
                Acid
-            -> String   -- ^ page title
+            -> Lazy.Text   -- ^ page title
             -> headers  -- ^ extra headers to add to \<head\> tag
             -> body     -- ^ contents of \<body\> tag
             -> CtrlV Response
@@ -317,7 +321,7 @@ viewPastePage acid pid =
                     <p>Paste <% pid %> could not be found.</p>
          (Just (Paste (PasteMeta{..}) paste)) ->
              do ok ()
-                appTemplate acid ("Paste " ++ (show $ unPasteId pid)) () $
+                appTemplate acid (Lazy.pack $ "Paste " ++ (show $ unPasteId pid)) () $
                     <div class="paste">
                      <dl class="paste-header">
                       <dt>Paste:</dt><dd><a href=(ViewPaste pid)><% pid %></a></dd>
@@ -408,14 +412,14 @@ instance (Functor m, Monad m) => EmbedAsChild (RouteT url m) Html where
 -- If you want to use your usual app template, then the auth stuff,
 -- which is in RouteT AuthProfileURL, needs to have a way to render
 -- your routes inside that context.
--- 
-instance (Functor m, Monad m) => EmbedAsAttr (RouteT AuthProfileURL m) (Attr String Route) where
+--
+instance (Functor m, Monad m) => EmbedAsAttr (RouteT AuthProfileURL m) (Attr Lazy.Text Route) where
     asAttr (n := u) = do
-           asAttr $ HTML.MkAttr (HTML.toName n, HTML.pAttrVal (concatMap (((++) "/") . Text.unpack) (toPathSegments u)))
+           asAttr $ MkAttr (toName n, pAttrVal (Lazy.pack $ concatMap (((++) "/") . Text.unpack) (toPathSegments u)))
 
 -- Stick our usual app template into a state where the auth
 -- functions, which are Blaze based, are OK with it.
-appTemplate' :: (Happstack m, EmbedAsAttr m (Attr String Route), XMLGenerator m, EmbedAsChild m Html, HSX.XMLType m ~ XML) => Acid -> String -> Html -> Html -> m Response
+appTemplate' :: (Happstack m, EmbedAsAttr m (Attr Lazy.Text Route), XMLGenerator m, EmbedAsChild m Html, StringType m ~ Lazy.Text, XMLType m ~ XML) => Acid -> Lazy.Text -> Html -> Html -> m Response
 appTemplate' a t h b = liftM toResponse (baseAppTemplate a t h b)
 
 ------------------------------------------------------------------------------
@@ -430,7 +434,7 @@ route acid@Acid{..} baseURL url =
       -- the last page we were on". - rlpowell
       (U_AuthProfile authProfileURL) ->
           do vr <- showURL ViewRecent
-             XMLGenT $ nestURL U_AuthProfile $ handleAuthProfile acidAuth acidProfile (appTemplate' acid) Nothing (Just baseURL) vr authProfileURL
+             XMLGenT $ nestURL U_AuthProfile $ handleAuthProfile acidAuth acidProfile (\s -> appTemplate' acid (Lazy.pack s)) Nothing (Just baseURL) vr authProfileURL
       ViewRecent      -> viewRecentPage acid
       (ViewPaste pid) -> viewPastePage acid pid
       NewPaste        -> newPastePage acid

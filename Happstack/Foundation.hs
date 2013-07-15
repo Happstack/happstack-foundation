@@ -75,10 +75,12 @@ import Data.Acid.Local
 import Data.Data
 import Data.SafeCopy
 import Data.Text as Text
+import qualified Data.Text.Lazy as Lazy
 import Data.String (IsString(..))
 import Control.Monad.Reader
 import Control.Monad.State
-import HSP  (XMLGenerator(..), XMLGen(..), EmbedAsChild(..), EmbedAsAttr(..), XML, XMLGenT(..), unXMLGenT, XMLType, Attr(..))
+import Happstack.Server.XMLGenT () -- instances for (Happstack (XMLGenT m))
+import HSP  (XMLGenerator(..), XMLGen(..), EmbedAsChild(..), EmbedAsAttr(..), XML, XMLGenT(..), unXMLGenT, XMLType, Attr(..), fromStringLit)
 import Text.Reform
 import Text.Reform.Happstack
 import Text.Reform.HSP.Text
@@ -223,7 +225,7 @@ defaultTemplate :: ( Functor m, Monad m
                    , EmbedAsChild (FoundationT' url acidState requestState m) headers
                    , XMLType (FoundationT' url acidState requestState m) ~ XML
                    ) =>
-                   String
+                   Lazy.Text
                 -> headers
                 -> body
                 -> FoundationT url acidState requestState m XML

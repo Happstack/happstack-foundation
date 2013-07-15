@@ -1,11 +1,12 @@
 {-# LANGUAGE DeriveDataTypeable, FlexibleContexts, FlexibleInstances, GeneralizedNewtypeDeriving, MultiParamTypeClasses, OverloadedStrings, RecordWildCards, TemplateHaskell, TypeFamilies, TypeSynonymInstances, OverloadedStrings #-}
-{-# OPTIONS_GHC -F -pgmFtrhsx #-}
+{-# OPTIONS_GHC -F -pgmFhsx2hs #-}
 module Main where
 
 import Happstack.Foundation
 import qualified Data.IxSet as IxSet
 import Data.IxSet (IxSet, Indexable, Proxy(..), (@=), getEQ, getOne, ixSet, ixFun)
 import Data.Text  (Text)
+import qualified Data.Text.Lazy as Lazy
 import qualified Data.Text as Text
 import Data.Time.Clock (UTCTime, getCurrentTime)
 
@@ -155,7 +156,7 @@ type CtrlVForm = FoundationForm Route CtrlVState () IO
 appTemplate :: ( EmbedAsChild CtrlV' headers
                , EmbedAsChild CtrlV' body
                ) =>
-               String   -- ^ page title
+               Lazy.Text   -- ^ page title
             -> headers  -- ^ extra headers to add to \<head\> tag
             -> body     -- ^ contents of \<body\> tag
             -> CtrlV Response
@@ -233,7 +234,7 @@ viewPastePage pid =
                     <p>Paste <% pid %> could not be found.</p>
          (Just (Paste (PasteMeta{..}) paste)) ->
              do ok ()
-                appTemplate ("Paste " ++ (show $ unPasteId pid)) () $
+                appTemplate (Lazy.pack $ "Paste " ++ (show $ unPasteId pid)) () $
                     <div class="paste">
                      <dl class="paste-header">
                       <dt>Paste:</dt><dd><a href=(ViewPaste pid)><% pid %></a></dd>

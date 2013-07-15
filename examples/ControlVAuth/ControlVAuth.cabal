@@ -16,13 +16,13 @@ Data-files:
 Executable ControlVAuth
   Main-Is:           Main.hs
   Build-Depends:     base < 5
-                     , happstack-foundation >= 0.3 && < 0.4
+                     , happstack-foundation >= 0.4 && < 0.5
                      , ixset == 1.0.*
                      , time == 1.4.*
                      , text == 0.11.*
                      , happstack-authenticate
                      , acid-state
-                     , hsx
+                     , hsp
                      , blaze-html
                      , happstack-hsp
                      , filepath
