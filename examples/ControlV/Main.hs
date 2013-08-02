@@ -144,9 +144,9 @@ $(derivePathInfo ''Route)
 
 -- | The foundation types are heavily parameterized -- but for our app
 -- we can pin all the type parameters down.
-type CtrlV'    = FoundationT' Route CtrlVState () IO
+type CtrlV'    = FoundationT' Route (AcidState CtrlVState) () IO
 type CtrlV     = XMLGenT CtrlV'
-type CtrlVForm = FoundationForm Route CtrlVState () IO
+type CtrlVForm = FoundationForm Route (AcidState CtrlVState) () IO
 
 ------------------------------------------------------------------------------
 -- appTemplate

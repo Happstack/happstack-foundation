@@ -14,6 +14,7 @@ import Data.Time.Clock (UTCTime, getCurrentTime)
 import Happstack.Auth
 import Happstack.Auth.Core.Auth
 import Happstack.Auth.Core.Profile
+import Happstack.Auth.Blaze.Templates
 import Control.Exception           (bracket)
 import Data.Acid.Local             (createCheckpointAndClose)
 import System.FilePath             ((</>))
@@ -80,17 +81,17 @@ instance Indexable Paste where
               ]
 
 -- | record to store in acid-state
-data CtrlVState = CtrlVState
+data PasteState = PasteState
     { pastes      :: IxSet Paste
     , nextPasteId :: PasteId
     }
     deriving (Data, Typeable)
-$(deriveSafeCopy 0 'base ''CtrlVState)
+$(deriveSafeCopy 0 'base ''PasteState)
 
 -- | initial value to use with acid-state when no prior state is found
-initialCtrlVState :: CtrlVState
-initialCtrlVState =
-    CtrlVState { pastes      = IxSet.empty
+initialPasteState :: PasteState
+initialPasteState =
+    PasteState { pastes      = IxSet.empty
                , nextPasteId = PasteId 1
                }
 
@@ -104,21 +105,21 @@ initialCtrlVState =
 --
 -- Otherwise, we update the existing paste.
 insertPaste :: Paste
-            -> Update CtrlVState PasteId
+            -> Update PasteState PasteId
 insertPaste p@Paste{..}
     | pasteId pasteMeta == PasteId 0 =
-        do cvs@CtrlVState{..} <- get
+        do cvs@PasteState{..} <- get
            put $ cvs { pastes = IxSet.insert (p { pasteMeta = pasteMeta { pasteId = nextPasteId }}) pastes
                      , nextPasteId = succ nextPasteId
                      }
            return nextPasteId
     | otherwise =
-        do cvs@CtrlVState{..} <- get
+        do cvs@PasteState{..} <- get
            put $ cvs { pastes = IxSet.updateIx (pasteId pasteMeta) p pastes }
            return (pasteId pasteMeta)
 
 -- | get a paste by it's 'PasteId'
-getPasteById :: PasteId -> Query CtrlVState (Maybe Paste)
+getPasteById :: PasteId -> Query PasteState (Maybe Paste)
 getPasteById pid = getOne . getEQ pid . pastes <$> ask
 
 type Limit  = Int
@@ -127,14 +128,14 @@ type Offset = Int
 -- | get recent pastes
 getRecentPastes :: Limit  -- ^ maximum number of recent pastes to return
                 -> Offset -- ^ number of pastes skip (useful for pagination)
-                -> Query CtrlVState [PasteMeta]
+                -> Query PasteState [PasteMeta]
 getRecentPastes limit offset =
-    do CtrlVState{..} <- ask
+    do PasteState{..} <- ask
        return $ map pasteMeta $ take limit $ drop offset $ IxSet.toDescList (Proxy :: Proxy UTCTime) pastes
 
 -- | now we need to tell acid-state which functions should be turn into
 -- acid-state events.
-$(makeAcidic ''CtrlVState
+$(makeAcidic ''PasteState
    [ 'getPasteById
    , 'getRecentPastes
    , 'insertPaste
@@ -162,9 +163,10 @@ $(derivePathInfo ''Route)
 
 -- | The foundation types are heavily parameterized -- but for our app
 -- we can pin all the type parameters down.
-type CtrlV'    = FoundationT' Route CtrlVState () IO
+
+type CtrlV'    = FoundationT' Route Acid () IO
 type CtrlV     = XMLGenT CtrlV'
-type CtrlVForm = FoundationForm Route CtrlVState () IO
+type CtrlVForm = FoundationForm Route Acid () IO
 
 ------------------------------------------------------------------------------
 -- From demo-hsp Acid.hs
@@ -174,7 +176,17 @@ type CtrlVForm = FoundationForm Route CtrlVState () IO
 data Acid = Acid
     { acidAuth        :: AcidState AuthState
     , acidProfile     :: AcidState ProfileState
+    , acidPaste       :: AcidState PasteState
     }
+
+instance (Functor m, Monad m) => HasAcidState (FoundationT' url Acid reqSt m) AuthState where
+    getAcidState = acidAuth <$> getAcidSt
+
+instance (Functor m, Monad m) => HasAcidState (FoundationT' url Acid reqSt m) ProfileState where
+    getAcidState = acidProfile <$> getAcidSt
+
+instance (Functor m, Monad m) => HasAcidState (FoundationT' url Acid reqSt m) PasteState where
+    getAcidState = acidPaste <$> getAcidSt
 
 -- | run an action which takes 'Acid'.
 --
@@ -189,41 +201,33 @@ withAcid :: Maybe FilePath -- ^ state directory
          -> IO a
 withAcid mBasePath f =
     let basePath = fromMaybe "_state" mBasePath in
-    bracket (openLocalStateFrom (basePath </> "auth")        initialAuthState)        (createCheckpointAndClose) $ \auth ->
-    bracket (openLocalStateFrom (basePath </> "profile")     initialProfileState)     (createCheckpointAndClose) $ \profile ->
-        f (Acid auth profile)
+    bracket (openLocalStateFrom (basePath </> "auth")    initialAuthState)    (createCheckpointAndClose) $ \auth ->
+    bracket (openLocalStateFrom (basePath </> "profile") initialProfileState) (createCheckpointAndClose) $ \profile ->
+    bracket (openLocalStateFrom (basePath </> "paste")   initialPasteState)   (createCheckpointAndClose) $ \paste ->
+        f (Acid auth profile paste)
 
 ------------------------------------------------------------------------------
 -- appTemplate
 ------------------------------------------------------------------------------
 
 -- | page template function
---
--- There are two forms here because we need to make it work for both
--- our usual happstack-foundation/HSP stuff, and for happstack-auth,
--- which is Blaze rather than HSP based.  So we make the base
--- template, and then make two versions that give it each of the two
--- contexts it needs.
-baseAppTemplate :: ( XMLGenerator m
-               , Happstack m
-               , EmbedAsAttr m (Attr Lazy.Text Route)
-               , EmbedAsChild m headers
-               , EmbedAsChild m body
-               , StringType m ~ Lazy.Text
+appTemplate :: ( EmbedAsChild CtrlV' headers
+               , EmbedAsChild CtrlV' body
                ) =>
-               Acid
-            -> Lazy.Text   -- ^ page title
+               Lazy.Text   -- ^ page title
             -> headers  -- ^ extra headers to add to \<head\> tag
             -> body     -- ^ contents of \<body\> tag
-            -> m (XMLType m)
-baseAppTemplate acid@Acid{..} ttl moreHdrs bdy = HTML.defaultTemplate ttl <%><link rel="stylesheet" href=CSS type="text/css" media="screen" /><% moreHdrs %></%> $
-                <%>
+            -> CtrlV Response
+appTemplate ttl moreHdrs bdy =
+    do html <- defaultTemplate ttl
+                 <%><link rel="stylesheet" href=CSS type="text/css" media="screen" /><% moreHdrs %></%>
+                 <%>
                  <div id="logo">^V</div>
                  <ul class="menu">
                   <li><a href=NewPaste>new paste</a></li>
                   <li><a href=ViewRecent>recent pastes</a></li>
                  </ul>
-                   <% do mUserId <- getUserId acidAuth acidProfile
+                   <% do mUserId <- join $ liftM2 getUserId getAcidState getAcidState
 
                          -- Debugging
                          -- authState <- query' acidAuth AskAuthState
@@ -245,20 +249,9 @@ baseAppTemplate acid@Acid{..} ttl moreHdrs bdy = HTML.defaultTemplate ttl <%><li
                                 <li><a href=(U_AuthProfile $ AuthURL A_AddAuth)>add another auth mode to your profile</a></li>
                               </ul>
                    %>
-                 <% bdy %>
-                </%>
-
--- This is the baseAppTemplate wrapped so that it can be used in the
--- normal happstack-foundation stuff.
-appTemplate :: ( EmbedAsChild CtrlV' headers
-               , EmbedAsChild CtrlV' body
-               ) =>
-               Acid
-            -> Lazy.Text   -- ^ page title
-            -> headers  -- ^ extra headers to add to \<head\> tag
-            -> body     -- ^ contents of \<body\> tag
-            -> CtrlV Response
-appTemplate acid ttl moreHdrs bdy = liftM toResponse (XMLGenT $ baseAppTemplate acid ttl moreHdrs bdy)
+                   <% bdy %>
+                 </%>
+       return (toResponse html)
 
 -- | This makes it easy to embed a PasteId in an HSP template
 instance EmbedAsChild CtrlV' PasteId where
@@ -270,18 +263,23 @@ instance EmbedAsChild CtrlV' PasteId where
 instance EmbedAsChild CtrlV' UTCTime where
     asChild time = asChild (show time)
 
+-- | This instance allows blaze-html markup to be easily embedded.
+-- It is required for the happstack-authentication support.
+instance EmbedAsChild CtrlV' Html where
+    asChild html = asChild (HTML.CDATA False (renderHtml html))
+
 ------------------------------------------------------------------------------
 -- Pages
 ------------------------------------------------------------------------------
 
 -- | page handler for 'ViewRecent'
-viewRecentPage :: Acid -> CtrlV Response
-viewRecentPage acid =
+viewRecentPage :: CtrlV Response
+viewRecentPage =
     do method GET
        recent <- query (GetRecentPastes 20 0)
        case recent of
-         [] -> appTemplate acid "Recent Pastes" () <p>There are no pastes yet.</p>
-         _  -> appTemplate acid "Recent Pastes" () $
+         [] -> appTemplate "Recent Pastes" () <p>There are no pastes yet.</p>
+         _  -> appTemplate "Recent Pastes" () $
                 <%>
                  <h1>Recent Pastes</h1>
                  <table>
@@ -310,18 +308,18 @@ viewRecentPage acid =
           </tr>
 
 -- | page handler for 'ViewPaste'
-viewPastePage :: Acid -> PasteId -> CtrlV Response
-viewPastePage acid pid =
+viewPastePage :: PasteId -> CtrlV Response
+viewPastePage pid =
     do method GET
        mPaste <- query (GetPasteById pid)
        case mPaste of
          Nothing ->
              do notFound ()
-                appTemplate acid "Paste not found." () $
+                appTemplate "Paste not found." () $
                     <p>Paste <% pid %> could not be found.</p>
          (Just (Paste (PasteMeta{..}) paste)) ->
              do ok ()
-                appTemplate acid (Lazy.pack $ "Paste " ++ (show $ unPasteId pid)) () $
+                appTemplate (Lazy.pack $ "Paste " ++ (show $ unPasteId pid)) () $
                     <div class="paste">
                      <dl class="paste-header">
                       <dt>Paste:</dt><dd><a href=(ViewPaste pid)><% pid %></a></dd>
@@ -343,18 +341,18 @@ formatPaste PlainText txt =
     <pre><% txt %></pre>
 
 -- | page handler for 'NewPaste'
-newPastePage :: Acid -> CtrlV Response
-newPastePage acid@Acid{..} =
+newPastePage :: CtrlV Response
+newPastePage =
     do here <- whereami
-       mUserId <- getUserId acidAuth acidProfile
+       mUserId <- join $ liftM2 getUserId getAcidState getAcidState
        case mUserId of
           Nothing ->
-            appTemplate acid "Add a Paste" () $
+            appTemplate "Add a Paste" () $
               <%>
                 <h1>You Are Not Logged In</h1>
               </%>
           (Just uid) ->
-            appTemplate acid "Add a Paste" () $
+            appTemplate "Add a Paste" () $
               <%>
                 <h1>Add a paste</h1>
                 <% reform (form here) "add" success Nothing pasteForm %>
@@ -395,49 +393,24 @@ pasteForm =
           | otherwise     = Right txt
 
 ------------------------------------------------------------------------------
--- Auth Support Functions
-------------------------------------------------------------------------------
-
--- the key to using happstack-authenticate with HSP is simple. First
--- you need to be able to embed Html in your HSP monad like this:
---
--- I (Robin Lee Powell) don't know how to fix this warning:
---
---    Warning: orphan instance:
---      instance (Functor m, Monad m) => EmbedAsChild (RouteT url m) Html
---
-instance (Functor m, Monad m) => EmbedAsChild (RouteT url m) Html where
-    asChild html = asChild (HTML.CDATA False (renderHtml html))
-
--- If you want to use your usual app template, then the auth stuff,
--- which is in RouteT AuthProfileURL, needs to have a way to render
--- your routes inside that context.
---
-instance (Functor m, Monad m) => EmbedAsAttr (RouteT AuthProfileURL m) (Attr Lazy.Text Route) where
-    asAttr (n := u) = do
-           asAttr $ MkAttr (toName n, pAttrVal (Lazy.pack $ concatMap (((++) "/") . Text.unpack) (toPathSegments u)))
-
--- Stick our usual app template into a state where the auth
--- functions, which are Blaze based, are OK with it.
-appTemplate' :: (Happstack m, EmbedAsAttr m (Attr Lazy.Text Route), XMLGenerator m, EmbedAsChild m Html, StringType m ~ Lazy.Text, XMLType m ~ XML) => Acid -> Lazy.Text -> Html -> Html -> m Response
-appTemplate' a t h b = liftM toResponse (baseAppTemplate a t h b)
-
-------------------------------------------------------------------------------
 -- route
 ------------------------------------------------------------------------------
 
 -- | the route mapping function
-route :: Acid -> Text -> Route -> CtrlV Response
-route acid@Acid{..} baseURL url =
+route :: Text -> Route -> CtrlV Response
+route baseURL url =
     case url of
       -- FIXME: replace the ViewRecent thing here with "go back to
       -- the last page we were on". - rlpowell
       (U_AuthProfile authProfileURL) ->
           do vr <- showURL ViewRecent
-             XMLGenT $ nestURL U_AuthProfile $ handleAuthProfile acidAuth acidProfile (\s -> appTemplate' acid (Lazy.pack s)) Nothing (Just baseURL) vr authProfileURL
-      ViewRecent      -> viewRecentPage acid
-      (ViewPaste pid) -> viewPastePage acid pid
-      NewPaste        -> newPastePage acid
+             acidAuth    <- getAcidState :: CtrlV (AcidState AuthState)
+             acidProfile <- getAcidState :: CtrlV (AcidState ProfileState)
+             rf <- askRouteFn
+             unRouteT (handleAuthProfileRouteT acidAuth acidProfile (\s -> appTemplate (Lazy.pack s)) Nothing (Just baseURL) vr authProfileURL) (rf . U_AuthProfile)
+      ViewRecent      -> viewRecentPage
+      (ViewPaste pid) -> viewPastePage pid
+      NewPaste        -> newPastePage
       CSS             -> serveFile (asContentType "text/css") "style.css"
 
 ------------------------------------------------------------------------------
@@ -452,11 +425,11 @@ main = withAcid Nothing $ \acid -> do
            let hosturl = if (length args > 1) then (Text.pack ((args !! 1) :: String))   else (Text.pack "http://localhost:8000")
            simpleApp id
             defaultConf { httpConf = nullConf {
-                       port      = appPort
-                   }
-                 }
-              (AcidLocal Nothing initialCtrlVState)
+                                       port      = appPort
+                                     }
+                        }
+              (AcidUsing acid)
               ()
               ViewRecent
               hosturl
-              (route acid hosturl)
+              (route hosturl)
