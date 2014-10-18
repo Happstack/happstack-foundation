@@ -3,12 +3,16 @@
 module Main where
 
 import Happstack.Foundation
+import Control.Exception (bracket)
+import Data.Acid.Local (createCheckpointAndClose)
 import qualified Data.IxSet as IxSet
 import Data.IxSet (IxSet, Indexable, Proxy(..), (@=), getEQ, getOne, ixSet, ixFun)
+import Data.Maybe (fromMaybe)
 import Data.Text  (Text)
 import qualified Data.Text.Lazy as Lazy
 import qualified Data.Text as Text
 import Data.Time.Clock (UTCTime, getCurrentTime)
+import System.FilePath ((</>))
 
 ------------------------------------------------------------------------------
 -- Model
@@ -145,9 +149,32 @@ $(derivePathInfo ''Route)
 
 -- | The foundation types are heavily parameterized -- but for our app
 -- we can pin all the type parameters down.
-type CtrlV'    = FoundationT' Route (AcidState CtrlVState) () IO
+type CtrlV'    = FoundationT' Route Acid () IO
 type CtrlV     = XMLGenT CtrlV'
-type CtrlVForm = FoundationForm Route (AcidState CtrlVState) () IO
+type CtrlVForm = FoundationForm Route Acid () IO
+
+data Acid = Acid
+    { acidPaste :: AcidState CtrlVState
+    }
+
+instance (Functor m, Monad m) => HasAcidState (FoundationT' url Acid reqSt m) CtrlVState where
+    getAcidState = acidPaste <$> getAcidSt
+
+-- | run an action which takes 'Acid'.
+--
+-- Uses 'bracket' to open / initialize / close all the 'AcidState' handles.
+--
+-- WARNING: The database files should only be opened by one thread in
+-- one application at a time. If you want to access the database from
+-- multiple threads (which you almost certainly do), then simply pass
+-- the 'Acid' handle to each thread.
+withAcid :: Maybe FilePath -- ^ state directory
+         -> (Acid -> IO a) -- ^ action
+         -> IO a
+withAcid mBasePath f =
+    let basePath = fromMaybe "_state" mBasePath in
+    bracket (openLocalStateFrom (basePath </> "paste")   initialCtrlVState)   (createCheckpointAndClose) $ \paste ->
+        f (Acid paste)
 
 ------------------------------------------------------------------------------
 -- appTemplate
@@ -319,4 +346,5 @@ route url =
 
 -- | start the app. listens on port 8000 on localhost
 main :: IO ()
-main = simpleApp id defaultConf (AcidLocal Nothing initialCtrlVState) () ViewRecent "" route
+main = withAcid Nothing $ \ acid -> do
+         simpleApp id defaultConf (AcidUsing acid) () ViewRecent "" route
