@@ -82,17 +82,17 @@ instance Indexable Paste where
               ]
 
 -- | record to store in acid-state
-data PasteState = PasteState
+data CtrlVState = CtrlVState
     { pastes      :: IxSet Paste
     , nextPasteId :: PasteId
     }
     deriving (Data, Typeable)
-$(deriveSafeCopy 0 'base ''PasteState)
+$(deriveSafeCopy 0 'base ''CtrlVState)
 
 -- | initial value to use with acid-state when no prior state is found
-initialPasteState :: PasteState
-initialPasteState =
-    PasteState { pastes      = IxSet.empty
+initialCtrlVState :: CtrlVState
+initialCtrlVState =
+    CtrlVState { pastes      = IxSet.empty
                , nextPasteId = PasteId 1
                }
 
@@ -106,21 +106,21 @@ initialPasteState =
 --
 -- Otherwise, we update the existing paste.
 insertPaste :: Paste
-            -> Update PasteState PasteId
+            -> Update CtrlVState PasteId
 insertPaste p@Paste{..}
     | pasteId pasteMeta == PasteId 0 =
-        do cvs@PasteState{..} <- get
+        do cvs@CtrlVState{..} <- get
            put $ cvs { pastes = IxSet.insert (p { pasteMeta = pasteMeta { pasteId = nextPasteId }}) pastes
                      , nextPasteId = succ nextPasteId
                      }
            return nextPasteId
     | otherwise =
-        do cvs@PasteState{..} <- get
+        do cvs@CtrlVState{..} <- get
            put $ cvs { pastes = IxSet.updateIx (pasteId pasteMeta) p pastes }
            return (pasteId pasteMeta)
 
 -- | get a paste by it's 'PasteId'
-getPasteById :: PasteId -> Query PasteState (Maybe Paste)
+getPasteById :: PasteId -> Query CtrlVState (Maybe Paste)
 getPasteById pid = getOne . getEQ pid . pastes <$> ask
 
 type Limit  = Int
@@ -129,14 +129,14 @@ type Offset = Int
 -- | get recent pastes
 getRecentPastes :: Limit  -- ^ maximum number of recent pastes to return
                 -> Offset -- ^ number of pastes skip (useful for pagination)
-                -> Query PasteState [PasteMeta]
+                -> Query CtrlVState [PasteMeta]
 getRecentPastes limit offset =
-    do PasteState{..} <- ask
+    do CtrlVState{..} <- ask
        return $ map pasteMeta $ take limit $ drop offset $ IxSet.toDescList (Proxy :: Proxy UTCTime) pastes
 
 -- | now we need to tell acid-state which functions should be turn into
 -- acid-state events.
-$(makeAcidic ''PasteState
+$(makeAcidic ''CtrlVState
    [ 'getPasteById
    , 'getRecentPastes
    , 'insertPaste
@@ -177,7 +177,7 @@ type CtrlVForm = FoundationForm Route Acid () IO
 data Acid = Acid
     { acidAuth        :: AcidState AuthState
     , acidProfile     :: AcidState ProfileState
-    , acidPaste       :: AcidState PasteState
+    , acidPaste       :: AcidState CtrlVState
     }
 
 instance (Functor m, Monad m) => HasAcidState (FoundationT' url Acid reqSt m) AuthState where
@@ -186,7 +186,7 @@ instance (Functor m, Monad m) => HasAcidState (FoundationT' url Acid reqSt m) Au
 instance (Functor m, Monad m) => HasAcidState (FoundationT' url Acid reqSt m) ProfileState where
     getAcidState = acidProfile <$> getAcidSt
 
-instance (Functor m, Monad m) => HasAcidState (FoundationT' url Acid reqSt m) PasteState where
+instance (Functor m, Monad m) => HasAcidState (FoundationT' url Acid reqSt m) CtrlVState where
     getAcidState = acidPaste <$> getAcidSt
 
 -- | run an action which takes 'Acid'.
@@ -204,7 +204,7 @@ withAcid mBasePath f =
     let basePath = fromMaybe "_state" mBasePath in
     bracket (openLocalStateFrom (basePath </> "auth")    initialAuthState)    (createCheckpointAndClose) $ \auth ->
     bracket (openLocalStateFrom (basePath </> "profile") initialProfileState) (createCheckpointAndClose) $ \profile ->
-    bracket (openLocalStateFrom (basePath </> "paste")   initialPasteState)   (createCheckpointAndClose) $ \paste ->
+    bracket (openLocalStateFrom (basePath </> "paste")   initialCtrlVState)   (createCheckpointAndClose) $ \paste ->
         f (Acid auth profile paste)
 
 ------------------------------------------------------------------------------
