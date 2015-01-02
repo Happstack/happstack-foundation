@@ -64,6 +64,8 @@ module Happstack.Foundation
     , module Text.Reform
     , module Text.Reform.Happstack
     , module Text.Reform.HSP.Text
+    -- * Internals
+    , AppError(..)
     )
     where
 
