@@ -149,12 +149,18 @@ $(derivePathInfo ''Route)
 
 -- | The foundation types are heavily parameterized -- but for our app
 -- we can pin all the type parameters down.
+
 type CtrlV'    = FoundationT' Route Acid () IO
 type CtrlV     = XMLGenT CtrlV'
 type CtrlVForm = FoundationForm Route Acid () IO
 
+------------------------------------------------------------------------------
+-- From demo-hsp Acid.hs
+------------------------------------------------------------------------------
+
+-- | 'Acid' holds all the 'AcidState' handles for this site.
 data Acid = Acid
-    { acidPaste :: AcidState CtrlVState
+    { acidPaste       :: AcidState CtrlVState
     }
 
 instance (Functor m, Monad m) => HasAcidState (FoundationT' url Acid reqSt m) CtrlVState where
@@ -189,16 +195,17 @@ appTemplate :: ( EmbedAsChild CtrlV' headers
             -> body     -- ^ contents of \<body\> tag
             -> CtrlV Response
 appTemplate ttl moreHdrs bdy =
-    do html <- defaultTemplate ttl <%><link rel="stylesheet" href=CSS type="text/css" media="screen" /><% moreHdrs %></%> $
-                <%>
+    do html <- defaultTemplate ttl
+                 <%><link rel="stylesheet" href=CSS type="text/css" media="screen" /><% moreHdrs %></%>
+                 <%>
                  <div id="logo">^V</div>
                  <ul class="menu">
                   <li><a href=NewPaste>new paste</a></li>
                   <li><a href=ViewRecent>recent pastes</a></li>
                  </ul>
-                 <% bdy %>
-                </%>
-       return $ toResponse html
+                   <% bdy %>
+                 </%>
+       return (toResponse html)
 
 
 -- | This makes it easy to embed a PasteId in an HSP template
@@ -344,7 +351,13 @@ route url =
 -- main
 ------------------------------------------------------------------------------
 
--- | start the app. listens on port 8000 on localhost
+-- | start the app. listens on port 8000.
 main :: IO ()
-main = withAcid Nothing $ \ acid -> do
-         simpleApp id defaultConf (AcidUsing acid) () ViewRecent "" route
+main = withAcid Nothing $ \acid -> do
+         simpleApp id
+            defaultConf
+              (AcidUsing acid)
+              ()
+              ViewRecent
+              ""
+              route

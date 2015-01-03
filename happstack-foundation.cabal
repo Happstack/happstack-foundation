@@ -21,6 +21,17 @@ Maintainer:          jeremy@n-heptane.com
 Category:            Happstack
 Build-type:          Simple
 Cabal-version:       >=1.6
+Data-Files:
+  examples/ControlV/ControlV.cabal
+  examples/ControlV/LICENSE
+  examples/ControlV/style.css
+  examples/ControlV/Setup.hs
+  examples/ControlV/Main.hs
+  examples/ControlVAuth/LICENSE
+  examples/ControlVAuth/style.css
+  examples/ControlVAuth/ControlVAuth.cabal
+  examples/ControlVAuth/Setup.hs
+  examples/ControlVAuth/Main.hs
 
 Library
   Exposed-modules:   Happstack.Foundation
