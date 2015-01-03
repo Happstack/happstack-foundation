@@ -48,6 +48,8 @@ module Happstack.Foundation
     , getAcidSt
       -- * running
     , simpleApp
+      -- * error type
+    , AppError
     -- * re-exports
     , Data(..)
     , Typeable(..)
