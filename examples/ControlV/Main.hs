@@ -3,12 +3,16 @@
 module Main where
 
 import Happstack.Foundation
+import Control.Exception (bracket)
+import Data.Acid.Local (createCheckpointAndClose)
 import qualified Data.IxSet as IxSet
 import Data.IxSet (IxSet, Indexable, Proxy(..), (@=), getEQ, getOne, ixSet, ixFun)
+import Data.Maybe (fromMaybe)
 import Data.Text  (Text)
 import qualified Data.Text.Lazy as Lazy
 import qualified Data.Text as Text
 import Data.Time.Clock (UTCTime, getCurrentTime)
+import System.FilePath ((</>))
 
 ------------------------------------------------------------------------------
 -- Model
@@ -20,7 +24,8 @@ import Data.Time.Clock (UTCTime, getCurrentTime)
 -- id yet. Though.. I am not thrilled about 0 having special meaning
 -- that is not enforced by the type system.
 newtype PasteId = PasteId { unPasteId :: Integer }
-    deriving (Eq, Ord, Read, Show, Enum, Data, Typeable, SafeCopy)
+    deriving (Eq, Ord, Read, Show, Enum, Data, Typeable)
+$(deriveSafeCopy 0 'base ''PasteId)
 $(derivePathInfo ''PasteId)
 
 -- | The format of the paste. Currently we only support plain-text,
@@ -144,9 +149,37 @@ $(derivePathInfo ''Route)
 
 -- | The foundation types are heavily parameterized -- but for our app
 -- we can pin all the type parameters down.
-type CtrlV'    = FoundationT' Route (AcidState CtrlVState) () IO
+type CtrlV'    = FoundationT' Route Acid () IO
 type CtrlV     = XMLGenT CtrlV'
-type CtrlVForm = FoundationForm Route (AcidState CtrlVState) () IO
+type CtrlVForm = FoundationForm Route Acid () IO
+
+------------------------------------------------------------------------------
+-- From demo-hsp Acid.hs
+------------------------------------------------------------------------------
+
+-- | 'Acid' holds all the 'AcidState' handles for this site.
+data Acid = Acid
+    { acidPaste       :: AcidState CtrlVState
+    }
+
+instance (Functor m, Monad m) => HasAcidState (FoundationT' url Acid reqSt m) CtrlVState where
+    getAcidState = acidPaste <$> getAcidSt
+
+-- | run an action which takes 'Acid'.
+--
+-- Uses 'bracket' to open / initialize / close all the 'AcidState' handles.
+--
+-- WARNING: The database files should only be opened by one thread in
+-- one application at a time. If you want to access the database from
+-- multiple threads (which you almost certainly do), then simply pass
+-- the 'Acid' handle to each thread.
+withAcid :: Maybe FilePath -- ^ state directory
+         -> (Acid -> IO a) -- ^ action
+         -> IO a
+withAcid mBasePath f =
+    let basePath = fromMaybe "_state" mBasePath in
+    bracket (openLocalStateFrom (basePath </> "paste")   initialCtrlVState)   (createCheckpointAndClose) $ \paste ->
+        f (Acid paste)
 
 ------------------------------------------------------------------------------
 -- appTemplate
@@ -161,17 +194,17 @@ appTemplate :: ( EmbedAsChild CtrlV' headers
             -> body     -- ^ contents of \<body\> tag
             -> CtrlV Response
 appTemplate ttl moreHdrs bdy =
-    do html <- defaultTemplate ttl <%><link rel="stylesheet" href=CSS type="text/css" media="screen" /><% moreHdrs %></%> $
-                <%>
+    do html <- defaultTemplate ttl
+                 <%><link rel="stylesheet" href=CSS type="text/css" media="screen" /><% moreHdrs %></%>
+                 <%>
                  <div id="logo">^V</div>
                  <ul class="menu">
                   <li><a href=NewPaste>new paste</a></li>
                   <li><a href=ViewRecent>recent pastes</a></li>
                  </ul>
-                 <% bdy %>
-                </%>
-       return $ toResponse html
-
+                   <% bdy %>
+                 </%>
+       return (toResponse html)
 
 -- | This makes it easy to embed a PasteId in an HSP template
 instance EmbedAsChild CtrlV' PasteId where
@@ -316,6 +349,13 @@ route url =
 -- main
 ------------------------------------------------------------------------------
 
--- | start the app. listens on port 8000 on localhost
+-- | start the app. listens on port 8000.
 main :: IO ()
-main = simpleApp id defaultConf (AcidLocal Nothing initialCtrlVState) () ViewRecent "" route
+main = withAcid Nothing $ \acid -> do
+         simpleApp id
+            defaultConf
+              (AcidUsing acid)
+              ()
+              ViewRecent
+              ""
+              route

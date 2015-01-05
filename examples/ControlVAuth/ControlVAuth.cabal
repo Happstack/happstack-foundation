@@ -19,7 +19,7 @@ Executable ControlVAuth
                      , happstack-foundation >= 0.5 && < 0.6
                      , ixset == 1.0.*
                      , time == 1.4.*
-                     , text == 0.11.*
+                     , text >= 0.11 && < 1.2
                      , happstack-authenticate >= 0.10.6
                      , acid-state
                      , hsp
