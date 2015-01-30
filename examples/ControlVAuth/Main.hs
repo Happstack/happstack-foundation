@@ -1,32 +1,34 @@
-{-# LANGUAGE DeriveDataTypeable, FlexibleContexts, FlexibleInstances, GeneralizedNewtypeDeriving, MultiParamTypeClasses, OverloadedStrings, RecordWildCards, TemplateHaskell, TypeFamilies, TypeSynonymInstances, OverloadedStrings #-}
+{-# LANGUAGE DeriveDataTypeable, FlexibleContexts, FlexibleInstances, GeneralizedNewtypeDeriving, MultiParamTypeClasses, OverloadedStrings, RecordWildCards, QuasiQuotes, TemplateHaskell, TypeFamilies, TypeSynonymInstances, OverloadedStrings #-}
 {-# OPTIONS_GHC -F -pgmFhsx2hs #-}
 module Main where
 
-import Happstack.Foundation
-import qualified Data.IxSet as IxSet
-import Data.IxSet (IxSet, Indexable, Proxy(..), (@=), getEQ, getOne, ixSet, ixFun)
-import Data.Text  (Text)
-import qualified Data.Text.Lazy as Lazy
-import qualified Data.Text as Text
-import Data.Time.Clock (UTCTime, getCurrentTime)
--- Added for auth
-
-import Happstack.Auth
-import Happstack.Auth.Core.Auth
-import Happstack.Auth.Core.Profile
-import Happstack.Auth.Blaze.Templates
-import Control.Exception           (bracket)
-import Data.Acid.Local             (createCheckpointAndClose)
-import System.FilePath             ((</>))
+import Control.Exception             (bracket, finally)
+import Data.Acid.Local               (createCheckpointAndClose)
+import qualified Data.IxSet          as IxSet
+import Data.IxSet                    (IxSet, Indexable, Proxy(..), (@=), getEQ, getOne, ixSet, ixFun)
 import Data.Maybe
-import System.Environment
+import Data.Text                     (Text)
+import qualified Data.Text.Lazy      as Lazy
+import qualified Data.Text           as Text
+import Data.Time.Clock               (UTCTime, getCurrentTime)
+import Happstack.Authenticate.Core           (AuthenticateState, AuthenticateURL(Controllers), UserId, getUserId)
+import Happstack.Authenticate.Route          (initAuthentication)
+import Happstack.Authenticate.Password.Route (initPassword)
+-- import Happstack.Authenticate.Password.URL(PasswordURL(..))
+-- import Happstack.Authenticate.OpenId.Core  (OpenIdState)
+import Happstack.Authenticate.OpenId.Route   (initOpenId)
+-- import Happstack.Authenticate.OpenId.URL   (OpenIdURL(..))
 
--- Added for Blaze under Auth
 import qualified Happstack.Server.HSP.HTML as HTML
-import HSP                                 (toName)
-import HSP.XML                             as HTML
-import Text.Blaze.Html                        (Html)
-import Text.Blaze.Html.Renderer.Text         (renderHtml)
+import Happstack.Server.JMacro       ()
+import Happstack.Foundation
+import HSP                           (toName)
+import HSP.XML                       as HTML
+import Language.Javascript.JMacro
+import System.Environment
+import System.FilePath               ((</>))
+import Text.Blaze.Html               (Html)
+import Text.Blaze.Html.Renderer.Text (renderHtml)
 
 ------------------------------------------------------------------------------
 -- Model
@@ -152,7 +154,8 @@ data Route
     | ViewPaste PasteId
     | NewPaste
     | CSS
-    | U_AuthProfile AuthProfileURL
+    | Authenticate AuthenticateURL
+    | CtrlVAppJs
       deriving (Eq, Ord, Read, Show, Data, Typeable)
 
 -- | we will just use template haskell to derive the route mapping
@@ -175,16 +178,12 @@ type CtrlVForm = FoundationForm Route Acid () IO
 
 -- | 'Acid' holds all the 'AcidState' handles for this site.
 data Acid = Acid
-    { acidAuth        :: AcidState AuthState
-    , acidProfile     :: AcidState ProfileState
-    , acidPaste       :: AcidState CtrlVState
+    { acidAuthenticate :: AcidState AuthenticateState
+    , acidPaste        :: AcidState CtrlVState
     }
 
-instance (Functor m, Monad m) => HasAcidState (FoundationT' url Acid reqSt m) AuthState where
-    getAcidState = acidAuth <$> getAcidSt
-
-instance (Functor m, Monad m) => HasAcidState (FoundationT' url Acid reqSt m) ProfileState where
-    getAcidState = acidProfile <$> getAcidSt
+instance (Functor m, Monad m) => HasAcidState (FoundationT' url Acid reqSt m) AuthenticateState where
+    getAcidState = acidAuthenticate <$> getAcidSt
 
 instance (Functor m, Monad m) => HasAcidState (FoundationT' url Acid reqSt m) CtrlVState where
     getAcidState = acidPaste <$> getAcidSt
@@ -197,15 +196,39 @@ instance (Functor m, Monad m) => HasAcidState (FoundationT' url Acid reqSt m) Ct
 -- one application at a time. If you want to access the database from
 -- multiple threads (which you almost certainly do), then simply pass
 -- the 'Acid' handle to each thread.
-withAcid :: Maybe FilePath -- ^ state directory
+withAcid :: AcidState AuthenticateState
+         -> Maybe FilePath -- ^ state directory
          -> (Acid -> IO a) -- ^ action
          -> IO a
-withAcid mBasePath f =
+withAcid authenticateState mBasePath f =
     let basePath = fromMaybe "_state" mBasePath in
-    bracket (openLocalStateFrom (basePath </> "auth")    initialAuthState)    (createCheckpointAndClose) $ \auth ->
-    bracket (openLocalStateFrom (basePath </> "profile") initialProfileState) (createCheckpointAndClose) $ \profile ->
     bracket (openLocalStateFrom (basePath </> "paste")   initialCtrlVState)   (createCheckpointAndClose) $ \paste ->
-        f (Acid auth profile paste)
+        f (Acid authenticateState paste)
+
+
+------------------------------------------------------------------------------
+-- angular App Controler
+------------------------------------------------------------------------------
+
+ctrlVAppJs :: JStat
+ctrlVAppJs = [jmacro|
+  {
+    var ctrlVApp = angular.module('ctrlVApp', [
+      'happstackAuthentication',
+      'usernamePassword',
+      'openId',
+      'ngRoute'
+    ]);
+
+    ctrlVApp.config(['$routeProvider',
+      function($routeProvider) {
+        $routeProvider.when('/resetPassword',
+                             { templateUrl: '/authenticate/authentication-methods/password/partial/reset-password-form',
+                               controller: 'UsernamePasswordCtrl'
+                             });
+      }]);
+  }
+  |]
 
 ------------------------------------------------------------------------------
 -- appTemplate
@@ -220,14 +243,31 @@ appTemplate :: ( EmbedAsChild CtrlV' headers
             -> body     -- ^ contents of \<body\> tag
             -> CtrlV Response
 appTemplate ttl moreHdrs bdy =
-    do html <- defaultTemplate ttl
-                 <%><link rel="stylesheet" href=CSS type="text/css" media="screen" /><% moreHdrs %></%>
-                 <%>
+    do routeFn <- askRouteFn
+       html <- <html>
+                <head>
+                 <meta name="viewport" content="width=device-width, initial-scale=1" />
+                 <title><% ttl %></title>
+                 <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js"></script>
+                 <script src="//ajax.googleapis.com/ajax/libs/angularjs/1.2.24/angular.min.js"></script>
+                 <script src="//ajax.googleapis.com/ajax/libs/angularjs/1.2.24/angular-route.min.js"></script>
+                 <script src=(routeFn CtrlVAppJs [])></script>
+                 <script src=(routeFn (Authenticate Controllers) [])></script>
+                 <link rel="stylesheet" href=CSS type="text/css" media="screen" />
+                 <% moreHdrs %>
+                </head>
+                <body ng-app="ctrlVApp" ng-controller="AuthenticationCtrl">
                  <div id="logo">^V</div>
                  <ul class="menu">
                   <li><a href=NewPaste>new paste</a></li>
                   <li><a href=ViewRecent>recent pastes</a></li>
                  </ul>
+                 <up-login-inline />
+                 <% bdy %>
+                </body>
+               </html>
+
+{-
                    <% do mUserId <- join $ liftM2 getUserId getAcidState getAcidState
 
                          -- Debugging
@@ -250,8 +290,7 @@ appTemplate ttl moreHdrs bdy =
                                 <li><a href=(U_AuthProfile $ AuthURL A_AddAuth)>add another auth mode to your profile</a></li>
                               </ul>
                    %>
-                   <% bdy %>
-                 </%>
+-}
        return (toResponse html)
 
 -- | This makes it easy to embed a PasteId in an HSP template
@@ -345,12 +384,33 @@ formatPaste PlainText txt =
 newPastePage :: CtrlV Response
 newPastePage =
     do here <- whereami
-       mUserId <- join $ liftM2 getUserId getAcidState getAcidState
+       mUserId <- join $ liftM getUserId getAcidState
        case mUserId of
           Nothing ->
             appTemplate "Add a Paste" () $
               <%>
-                <h1>You Are Not Logged In</h1>
+                 <div up-authenticated=False>
+                  <h1>You Are Not Logged In</h1>
+                  <up-login-inline />
+                  <p>If you don't have an account already you can signup:</p>
+                  <up-signup-password />
+
+                  <p>If you have forgotten your password you can request it to be sent to your email address:</p>
+                  <up-request-reset-password />
+
+                  <div ng-controller="OpenIdCtrl">
+                    <p>You could also sign in using your Google OpenId:</p>
+                    <openid-google />
+                    <openid-yahoo />
+                  </div>
+                </div>
+
+                <div up-authenticated=True>
+                 <p>You are now logged in. You can <a ng-click="logout()" href="">Click Here To Logout</a>. Or you can change your password here:</p>
+
+                 <up-change-password />
+                </div>
+
               </%>
           (Just uid) ->
             appTemplate "Add a Paste" () $
@@ -398,17 +458,20 @@ pasteForm =
 ------------------------------------------------------------------------------
 
 -- | the route mapping function
-route :: Text -> Route -> CtrlV Response
-route baseURL url =
+route :: (AuthenticateURL -> RouteT AuthenticateURL (ServerPartT IO) Response)
+      -> Text
+      -> Route
+      -> CtrlV Response
+route routeAuthenticate _baseURL url =
     case url of
       -- FIXME: replace the ViewRecent thing here with "go back to
       -- the last page we were on". - rlpowell
-      (U_AuthProfile authProfileURL) ->
-          do vr <- showURL ViewRecent
-             acidAuth    <- getAcidState :: CtrlV (AcidState AuthState)
-             acidProfile <- getAcidState :: CtrlV (AcidState ProfileState)
-             rf <- askRouteFn
-             unRouteT (handleAuthProfileRouteT acidAuth acidProfile (\s -> appTemplate (Lazy.pack s)) Nothing (Just baseURL) vr authProfileURL) (rf . U_AuthProfile)
+      Authenticate authenticateURL ->
+         lift $ nestURL Authenticate $
+            mapRouteT lift $ routeAuthenticate authenticateURL
+      CtrlVAppJs   ->
+        do ok $ toResponse $ ctrlVAppJs
+
       ViewRecent      -> viewRecentPage
       (ViewPaste pid) -> viewPastePage pid
       NewPaste        -> newPastePage
@@ -420,17 +483,23 @@ route baseURL url =
 
 -- | start the app. listens on port 8000.
 main :: IO ()
-main = withAcid Nothing $ \acid -> do
+main = do
+  (cleanup, routeAuthenticate, authenticateState) <-
+    initAuthentication Nothing
+      [ initPassword "http://localhost:8000/#resetPassword" "example.org"
+      , initOpenId   (Just "http://localhost:8000/")
+      ]
+  withAcid authenticateState Nothing $ \acid -> do
            args <- getArgs
            let appPort = if (length args > 0) then (read (args !! 0) :: Int) else 8000
            let hosturl = if (length args > 1) then (Text.pack ((args !! 1) :: String))   else (Text.pack "http://localhost:8000")
-           simpleApp id
-            defaultConf { httpConf = nullConf {
-                                       port      = appPort
-                                     }
-                        }
-              (AcidUsing acid)
-              ()
-              ViewRecent
-              hosturl
-              (route hosturl)
+           (simpleApp id
+             defaultConf { httpConf = nullConf {
+                                        port      = appPort
+                                      }
+                         }
+               (AcidUsing acid)
+               ()
+               ViewRecent
+               hosturl
+               (route routeAuthenticate hosturl)) `finally` cleanup
