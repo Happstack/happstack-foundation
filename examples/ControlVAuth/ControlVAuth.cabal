@@ -16,6 +16,8 @@ Data-files:
 Executable ControlVAuth
   Main-Is:           Main.hs
   Build-Depends:     base < 5
+                     , acid-state
+--                     , blaze-html
                      , happstack-foundation   >= 0.5   && < 0.6
                      , jmacro                 >= 0.6.9 && < 0.6.10
                      , ixset                  == 1.0.*
@@ -23,8 +25,7 @@ Executable ControlVAuth
                      , text                   >= 0.11  && < 1.3
                      , happstack-authenticate >= 2.0   && < 2.1
                      , happstack-jmacro       >= 7.0   && < 7.1
-                     , acid-state
                      , hsp
-                     , blaze-html
                      , happstack-hsp
                      , filepath
+                     , lens

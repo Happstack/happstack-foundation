@@ -3,6 +3,7 @@
 module Main where
 
 import Control.Exception             (bracket, finally)
+import Control.Lens                  ((^.))
 import Data.Acid.Local               (createCheckpointAndClose)
 import qualified Data.IxSet          as IxSet
 import Data.IxSet                    (IxSet, Indexable, Proxy(..), (@=), getEQ, getOne, ixSet, ixFun)
@@ -11,7 +12,7 @@ import Data.Text                     (Text)
 import qualified Data.Text.Lazy      as Lazy
 import qualified Data.Text           as Text
 import Data.Time.Clock               (UTCTime, getCurrentTime)
-import Happstack.Authenticate.Core           (AuthenticateState, AuthenticateURL(Controllers), UserId, getUserId)
+import Happstack.Authenticate.Core           (AuthenticateState, AuthenticateURL(Controllers), Username, getToken, unUsername, username)
 import Happstack.Authenticate.Route          (initAuthentication)
 import Happstack.Authenticate.Password.Route (initPassword)
 -- import Happstack.Authenticate.Password.URL(PasswordURL(..))
@@ -27,8 +28,6 @@ import HSP.XML                       as HTML
 import Language.Javascript.JMacro
 import System.Environment
 import System.FilePath               ((</>))
-import Text.Blaze.Html               (Html)
-import Text.Blaze.Html.Renderer.Text (renderHtml)
 
 ------------------------------------------------------------------------------
 -- Model
@@ -59,7 +58,7 @@ $(deriveSafeCopy 0 'base ''Format)
 data PasteMeta = PasteMeta
     { pasteId  :: PasteId
     , title    :: Text
-    , nickname :: Text
+    , nickname :: Username
     , format   :: Format
     , pasted   :: UTCTime
     }
@@ -257,13 +256,15 @@ appTemplate ttl moreHdrs bdy =
                  <% moreHdrs %>
                 </head>
                 <body ng-app="ctrlVApp" ng-controller="AuthenticationCtrl">
-                 <div id="logo">^V</div>
-                 <ul class="menu">
-                  <li><a href=NewPaste>new paste</a></li>
-                  <li><a href=ViewRecent>recent pastes</a></li>
-                 </ul>
-                 <up-login-inline />
-                 <% bdy %>
+                 <div ng-controller="UsernamePasswordCtrl">
+                  <div id="logo">^V</div>
+                  <ul class="menu">
+                   <li><a href=NewPaste>new paste</a></li>
+                   <li><a href=ViewRecent>recent pastes</a></li>
+                  </ul>
+--                 <up-login-inline />
+                  <% bdy %>
+                 </div>
                 </body>
                </html>
 
@@ -303,11 +304,8 @@ instance EmbedAsChild CtrlV' PasteId where
 instance EmbedAsChild CtrlV' UTCTime where
     asChild time = asChild (show time)
 
--- | This instance allows blaze-html markup to be easily embedded.
--- It is required for the happstack-authentication support.
-instance EmbedAsChild CtrlV' Html where
-    asChild html = asChild (HTML.CDATA False (renderHtml html))
-
+instance EmbedAsChild CtrlV' Username where
+   asChild u = asChild (u ^. unUsername)
 ------------------------------------------------------------------------------
 -- Pages
 ------------------------------------------------------------------------------
@@ -342,7 +340,7 @@ viewRecentPage =
           <tr>
            <td><a href=(ViewPaste pasteId)><% show $ unPasteId pasteId %></a></td>
            <td><a href=(ViewPaste pasteId)><% title       %></a></td>
-           <td><% nickname    %></td>
+           <td><% nickname %></td>
            <td><% pasted      %></td>
            <td><% show format %></td>
           </tr>
@@ -384,39 +382,32 @@ formatPaste PlainText txt =
 newPastePage :: CtrlV Response
 newPastePage =
     do here <- whereami
-       mUserId <- join $ liftM getUserId getAcidState
-       case mUserId of
-          Nothing ->
-            appTemplate "Add a Paste" () $
+       appTemplate "Add a Paste" () $
               <%>
-                 <div up-authenticated=False>
-                  <h1>You Are Not Logged In</h1>
-                  <up-login-inline />
-                  <p>If you don't have an account already you can signup:</p>
-                  <up-signup-password />
+                <div up-authenticated=False>
+                 <h1>You Are Not Logged In</h1>
+                 <up-login-inline />
+                 <p>If you don't have an account already you can signup:</p>
+                 <up-signup-password />
 
-                  <p>If you have forgotten your password you can request it to be sent to your email address:</p>
-                  <up-request-reset-password />
+                 <p>If you have forgotten your password you can request it to be sent to your email address:</p>
+                 <up-request-reset-password />
 
-                  <div ng-controller="OpenIdCtrl">
-                    <p>You could also sign in using your Google OpenId:</p>
-                    <openid-google />
-                    <openid-yahoo />
-                  </div>
+                 <div ng-controller="OpenIdCtrl">
+                  <p>You could also sign in using your Google OpenId:</p>
+                  <openid-google />
+                  <openid-yahoo />
+                 </div>
                 </div>
 
                 <div up-authenticated=True>
-                 <p>You are now logged in. You can <a ng-click="logout()" href="">Click Here To Logout</a>. Or you can change your password here:</p>
+                 <h1>Add a paste</h1>
+                 <% reform (form here) "add" success Nothing pasteForm %>
 
+                 <p>You are logged in. You can <a ng-click="logout()" href="">Click Here To Logout</a>. Or you can change your password here:</p>
                  <up-change-password />
                 </div>
 
-              </%>
-          (Just uid) ->
-            appTemplate "Add a Paste" () $
-              <%>
-                <h1>Add a paste</h1>
-                <% reform (form here) "add" success Nothing pasteForm %>
               </%>
     where
       success :: Paste -> CtrlV Response
@@ -429,21 +420,26 @@ pasteForm :: CtrlVForm Paste
 pasteForm =
     (fieldset $
        ul $
-          (,,,) <$> (li $ label <span>title</span>  ++> (inputText "" `transformEither` required) <++ errorList)
-                <*> (li $ label <span>nick</span>   ++> (inputText "" `transformEither` required) <++ errorList)
-                <*> (li $ label <span>format</span> ++> formatForm)
-                <*> (li $ label <div>paste</div>    ++> errorList ++> (textarea 80 25 "" `transformEither` required))
-                <* inputSubmit "paste!"
+          (,,) <$> (li $ label <span>title</span>  ++> (inputText "" `transformEither` required) <++ errorList)
+               <*> (li $ label <span>format</span> ++> formatForm)
+               <*> (li $ label <div>paste</div>    ++> errorList ++> (textarea 80 25 "" `transformEither` required))
+               <* inputSubmit "paste!"
     )  `transformEitherM` toPaste
     where
       formatForm =
           select [(a, show a) | a <- [minBound .. maxBound]] (== PlainText)
-      toPaste (ttl, nick, fmt, bdy) =
-          do now <- liftIO getCurrentTime
-             return $ Right $
+      toPaste (ttl, fmt, bdy) =
+          do now     <- liftIO getCurrentTime
+             as      <- getAcidState
+             mToken <- lift $ getToken as
+             case mToken of
+               Nothing ->
+                 return $ Left $ "You must login to post."
+               (Just (user, _)) ->
+                 return $ Right $
                         (Paste { pasteMeta = PasteMeta { pasteId  = PasteId 0
                                                        , title    = ttl
-                                                       , nickname = nick
+                                                       , nickname = user ^. username
                                                        , format   = fmt
                                                        , pasted   = now
                                                        }
