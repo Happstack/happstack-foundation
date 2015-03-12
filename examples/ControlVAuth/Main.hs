@@ -12,7 +12,7 @@ import Data.Text                     (Text)
 import qualified Data.Text.Lazy      as Lazy
 import qualified Data.Text           as Text
 import Data.Time.Clock               (UTCTime, getCurrentTime)
-import Happstack.Authenticate.Core           (AuthenticateState, AuthenticateURL(Controllers), Username, getToken, unUsername, username)
+import Happstack.Authenticate.Core           (AuthenticateState, AuthenticateURL(Controllers), Username, UserId(..), getToken, tokenUser, unUsername, username)
 import Happstack.Authenticate.Route          (initAuthentication)
 import Happstack.Authenticate.Password.Route (initPassword)
 -- import Happstack.Authenticate.Password.URL(PasswordURL(..))
@@ -406,8 +406,13 @@ newPastePage =
 
                  <p>You are logged in. You can <a ng-click="logout()" href="">Click Here To Logout</a>. Or you can change your password here:</p>
                  <up-change-password />
-                </div>
 
+                 <div ng-controller="OpenIdCtrl" ng-hide="!claims.authAdmin">
+                  <p>If you are an admin you can edit the realm:</p>
+                  <openid-realm />
+                 </div>
+
+                </div>
               </%>
     where
       success :: Paste -> CtrlV Response
@@ -435,11 +440,11 @@ pasteForm =
              case mToken of
                Nothing ->
                  return $ Left $ "You must login to post."
-               (Just (user, _)) ->
+               (Just (token, _)) ->
                  return $ Right $
                         (Paste { pasteMeta = PasteMeta { pasteId  = PasteId 0
                                                        , title    = ttl
-                                                       , nickname = user ^. username
+                                                       , nickname = token ^. tokenUser ^. username
                                                        , format   = fmt
                                                        , pasted   = now
                                                        }
@@ -481,9 +486,9 @@ route routeAuthenticate _baseURL url =
 main :: IO ()
 main = do
   (cleanup, routeAuthenticate, authenticateState) <-
-    initAuthentication Nothing
+    initAuthentication Nothing (\uid -> return $ uid == UserId 1)
       [ initPassword "http://localhost:8000/#resetPassword" "example.org"
-      , initOpenId   (Just "http://localhost:8000/")
+      , initOpenId
       ]
   withAcid authenticateState Nothing $ \acid -> do
            args <- getArgs
