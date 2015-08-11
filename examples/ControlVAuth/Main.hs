@@ -9,6 +9,7 @@ import qualified Data.IxSet          as IxSet
 import Data.IxSet                    (IxSet, Indexable, Proxy(..), (@=), getEQ, getOne, ixSet, ixFun)
 import Data.Maybe
 import Data.Text                     (Text)
+-- import Data.UserId                   (UserId(..))
 import qualified Data.Text.Lazy      as Lazy
 import qualified Data.Text           as Text
 import Data.Time.Clock               (UTCTime, getCurrentTime)
@@ -57,6 +58,7 @@ $(deriveSafeCopy 0 'base ''Format)
 -- only the meta-data. For example, when generating a list of recent pastes.
 data PasteMeta = PasteMeta
     { pasteId  :: PasteId
+    , replyTo  :: Maybe PasteId
     , title    :: Text
     , nickname :: Username
     , format   :: Format
@@ -78,8 +80,8 @@ $(deriveSafeCopy 0 'base ''Paste)
 -- We index on the 'PasteId' and the time it was pasted.
 instance Indexable Paste where
     empty =
-        ixSet [ ixFun $ (:[]) . pasteId . pasteMeta
-              , ixFun $ (:[]) . pasted  . pasteMeta
+        ixSet [ ixFun $ (:[]) . pasteId  . pasteMeta
+              , ixFun $ (:[]) . pasted   . pasteMeta
               ]
 
 -- | record to store in acid-state
@@ -135,11 +137,18 @@ getRecentPastes limit offset =
     do CtrlVState{..} <- ask
        return $ map pasteMeta $ take limit $ drop offset $ IxSet.toDescList (Proxy :: Proxy UTCTime) pastes
 
+-- | get a list of all paste ids
+getPasteIds :: Query CtrlVState [PasteId]
+getPasteIds =
+    do CtrlVState{..} <- ask
+       return $ map (pasteId . pasteMeta) $ IxSet.toAscList (Proxy :: Proxy PasteId) pastes
+
 -- | now we need to tell acid-state which functions should be turn into
 -- acid-state events.
 $(makeAcidic ''CtrlVState
    [ 'getPasteById
    , 'getRecentPastes
+   , 'getPasteIds
    , 'insertPaste
    ])
 
@@ -324,6 +333,7 @@ viewRecentPage =
                   <thead>
                    <tr>
                     <th>id</th>
+                    <th>replyto</th>
                     <th>title</th>
                     <th>author</th>
                     <th>date</th>
@@ -339,6 +349,9 @@ viewRecentPage =
       mkTableRow PasteMeta{..} =
           <tr>
            <td><a href=(ViewPaste pasteId)><% show $ unPasteId pasteId %></a></td>
+           <td><% case replyTo of
+                    Nothing -> <span/>
+                    (Just pid) -> <a href=(ViewPaste pid)><% pid %></a> %></td>
            <td><a href=(ViewPaste pasteId)><% title       %></a></td>
            <td><% nickname %></td>
            <td><% pasted      %></td>
@@ -361,6 +374,11 @@ viewPastePage pid =
                     <div class="paste">
                      <dl class="paste-header">
                       <dt>Paste:</dt><dd><a href=(ViewPaste pid)><% pid %></a></dd>
+                      <% case replyTo of
+                           Nothing -> <%><span /></%>
+                           (Just rid) ->
+                               <%><dt>Reply To:</dt><dd><a href=(ViewPaste rid)><% rid %></a></dd></%>
+                        %>
                       <dt>Title:</dt><dd><% title %></dd>
                       <dt>Author:</dt><dd><% nickname %></dd>
                      </dl>
@@ -402,7 +420,8 @@ newPastePage =
 
                 <div up-authenticated=True>
                  <h1>Add a paste</h1>
-                 <% reform (form here) "add" success Nothing pasteForm %>
+                 <% do pasteIds <- query GetPasteIds
+                       reform (form here) "add" success Nothing (pasteForm pasteIds) %>
 
                  <p>You are logged in. You can <a ng-click="logout()" href="">Click Here To Logout</a>. Or you can change your password here:</p>
                  <up-change-password />
@@ -421,19 +440,20 @@ newPastePage =
              seeOtherURL (ViewPaste pid)
 
 -- | the 'Form' used for entering a new paste
-pasteForm :: CtrlVForm Paste
-pasteForm =
+pasteForm :: [PasteId] -> CtrlVForm Paste
+pasteForm pasteIds =
     (fieldset $
        ul $
-          (,,) <$> (li $ label <span>title</span>  ++> (inputText "" `transformEither` required) <++ errorList)
-               <*> (li $ label <span>format</span> ++> formatForm)
-               <*> (li $ label <div>paste</div>    ++> errorList ++> (textarea 80 25 "" `transformEither` required))
-               <* inputSubmit "paste!"
+          (,,,) <$> (li $ label <span>reply to</span> ++> (select ((PasteId 0,"none") : [(pid, show (unPasteId pid)) | pid <- pasteIds]) (== PasteId 0)))
+                <*> (li $ label <span>title</span>  ++> (inputText "" `transformEither` required) <++ errorList)
+                <*> (li $ label <span>format</span> ++> formatForm)
+                <*> (li $ label <div>paste</div>    ++> errorList ++> (textarea 80 25 "" `transformEither` required))
+                <* inputSubmit "paste!"
     )  `transformEitherM` toPaste
     where
       formatForm =
           select [(a, show a) | a <- [minBound .. maxBound]] (== PlainText)
-      toPaste (ttl, fmt, bdy) =
+      toPaste (rid, ttl, fmt, bdy) =
           do now     <- liftIO getCurrentTime
              as      <- getAcidState
              mToken <- lift $ getToken as
@@ -443,6 +463,7 @@ pasteForm =
                (Just (token, _)) ->
                  return $ Right $
                         (Paste { pasteMeta = PasteMeta { pasteId  = PasteId 0
+                                                       , replyTo  = case rid of (PasteId 0) -> Nothing ; _ -> Just rid
                                                        , title    = ttl
                                                        , nickname = token ^. tokenUser ^. username
                                                        , format   = fmt
