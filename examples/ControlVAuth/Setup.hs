@@ -1,2 +1,11 @@
+#!/usr/bin/env runghc
+
 import Distribution.Simple
-main = defaultMain
+import Distribution.Simple.Program
+
+hsx2hsProgram = simpleProgram "hsx2hs"
+
+main :: IO ()
+main = defaultMainWithHooks simpleUserHooks {
+         hookedPrograms = [hsx2hsProgram]
+       }
