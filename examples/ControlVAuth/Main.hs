@@ -9,12 +9,13 @@ import qualified Data.IxSet          as IxSet
 import Data.IxSet                    (IxSet, Indexable, Proxy(..), (@=), getEQ, getOne, ixSet, ixFun)
 import Data.Maybe
 import Data.Text                     (Text)
--- import Data.UserId                   (UserId(..))
+import Data.UserId                   (UserId(..))
 import qualified Data.Text.Lazy      as Lazy
 import qualified Data.Text           as Text
 import Data.Time.Clock               (UTCTime, getCurrentTime)
-import Happstack.Authenticate.Core           (AuthenticateState, AuthenticateURL(Controllers), Username, UserId(..), getToken, tokenUser, unUsername, username)
+import Happstack.Authenticate.Core           (AuthenticateState, AuthenticateConfig(..), AuthenticateURL(Controllers), Username, getToken, tokenUser, unUsername, username, usernamePolicy)
 import Happstack.Authenticate.Route          (initAuthentication)
+import Happstack.Authenticate.Password.Core  (PasswordConfig(..))
 import Happstack.Authenticate.Password.Route (initPassword)
 -- import Happstack.Authenticate.Password.URL(PasswordURL(..))
 -- import Happstack.Authenticate.OpenId.Core  (OpenIdState)
@@ -420,9 +421,7 @@ newPastePage =
 
                 <div up-authenticated=True>
                  <h1>Add a paste</h1>
-                 <% do pasteIds <- query GetPasteIds
-                       reform (form here) "add" success Nothing (pasteForm pasteIds) %>
-
+                 <% theForm here %>
                  <p>You are logged in. You can <a ng-click="logout()" href="">Click Here To Logout</a>. Or you can change your password here:</p>
                  <up-change-password />
 
@@ -434,6 +433,11 @@ newPastePage =
                 </div>
               </%>
     where
+      theForm :: Route -> CtrlV [CtrlV XML]
+      theForm here =
+          do pasteIds <- query GetPasteIds
+             reform (form here) "add" success Nothing (pasteForm pasteIds)
+
       success :: Paste -> CtrlV Response
       success paste =
           do pid <- update (InsertPaste paste)
@@ -507,10 +511,24 @@ route routeAuthenticate _baseURL url =
 main :: IO ()
 main = do
   (cleanup, routeAuthenticate, authenticateState) <-
-    initAuthentication Nothing (\uid -> return $ uid == UserId 1)
-      [ initPassword "http://localhost:8000/#resetPassword" "example.org"
-      , initOpenId
-      ]
+         let authenticateConfig = AuthenticateConfig
+               { _isAuthAdmin        = const $ return True
+               , _usernameAcceptable = usernamePolicy
+               , _requireEmail       = True
+               }
+             passwordConfig = PasswordConfig
+               { _resetLink = "http://localhost:8000/#resetPassword"
+               , _domain    =  "example.org"
+               , _passwordAcceptable = \t ->
+                   if Text.length t >= 5
+                   then Nothing
+                   else Just "Must be at least 5 characters."
+               }
+         in
+           initAuthentication Nothing authenticateConfig
+            [ initPassword passwordConfig
+            , initOpenId
+            ]
   withAcid authenticateState Nothing $ \acid -> do
            args <- getArgs
            let appPort = if (length args > 0) then (read (args !! 0) :: Int) else 8000
