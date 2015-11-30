@@ -1,0 +1,34 @@
+language: haskell
+sudo: false
+env:
+ - GHCVER=7.6.3 CABALVER=1.18
+ - GHCVER=7.8.4 CABALVER=1.18
+ - GHCVER=7.10.2 CABALVER=1.22
+ - GHCVER=head  CABALVER=head
+
+matrix:
+  allow_failures:
+ #  - env: GHCVER=7.10.1 CABALVER=1.22
+   - env: GHCVER=head  CABALVER=head
+
+addons:
+  apt:
+    sources:
+    - hvr-ghc
+    packages:
+    - ghc-$GHCVER
+    - cabal-install-$CABALVER
+before_install:
+ - export PATH=/opt/ghc/$GHCVER/bin:/opt/cabal/$CABALVER/bin:$HOME/.cabal/bin:$PATH
+ - cabal --version
+ - cabal install happy alex
+
+install:
+ - travis_retry cabal update
+ - cabal install --only-dependencies --enable-tests --constraint "text -integer-simple"
+
+script:
+ - cabal configure --enable-tests
+ - cabal build
+ - cabal test
+
