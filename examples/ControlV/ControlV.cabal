@@ -20,5 +20,5 @@ Executable ControlV
                      filepath,
                      happstack-foundation >= 0.5 && < 0.6,
                      ixset == 1.0.*,
-                     time >= 1.4 && < 1.6,
+                     time >= 1.4 && < 1.7,
                      text >= 0.11 && < 1.3
