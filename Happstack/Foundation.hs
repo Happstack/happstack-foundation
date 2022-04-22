@@ -148,7 +148,7 @@ update event =
 -- checkpoints have been upgrade. We should replace this with a
 -- version that only does the checkpoint if *all* the acid states
 -- could be openned successfully.
-withLocalState :: (MonadBaseControl IO m, MonadIO m, IsAcidic st, Typeable st) =>
+withLocalState :: (MonadBaseControl IO m, MonadIO m, SafeCopy st, IsAcidic st, Typeable st) =>
                   Maybe FilePath        -- ^ path to state directory
                -> st                    -- ^ initial state value
                -> (AcidState st -> m a) -- ^ function which uses the `AcidState` handle
@@ -225,7 +225,7 @@ type FoundationForm url acidState requestState m = Form (FoundationT url acidSta
 
 -- | configuration information for our acid-state database
 data AcidConfig st where
-    AcidLocal :: (IsAcidic st, Typeable st) => Maybe FilePath -> st -> AcidConfig (AcidState st)
+    AcidLocal :: (IsAcidic st, SafeCopy st, Typeable st) => Maybe FilePath -> st -> AcidConfig (AcidState st)
     AcidUsing :: st -> AcidConfig st
 
 withAcidConfig :: (MonadIO m, MonadBaseControl IO m) => AcidConfig st -> (st -> m a) -> m a
